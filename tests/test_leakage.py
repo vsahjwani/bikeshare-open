@@ -7,9 +7,14 @@ scores R^2 = 1.0 and looks brilliant while having learned nothing.
 import pandas as pd
 import pytest
 
-from src.config import FORBIDDEN, TARGET
+from src.config import FORBIDDEN, LAG_WARMUP, TARGET
 from src.features import build_features, feature_columns
 from src.ingest import load_raw
+
+
+@pytest.fixture(scope="module")
+def raw():
+    return load_raw().sort_values("dteday").reset_index(drop=True)
 
 
 @pytest.fixture(scope="module")
@@ -64,3 +69,32 @@ def test_no_missing_values(feats):
 def test_dates_are_sorted_and_unique(feats):
     assert feats.dteday.is_monotonic_increasing
     assert feats.dteday.is_unique
+
+
+def test_lag_7_is_a_true_calendar_lag(feats, raw):
+    """cnt_lag_7 must equal cnt exactly LAG_WARMUP calendar days earlier.
+
+    Nothing asserted anything about this column before, which means
+    shift(LAG_WARMUP) at src/features.py:75 could become shift(1) -- an
+    exact copy of cnt_lag_1 -- or be deleted, and the suite stayed green
+    while the model kept using it.
+
+    raw rather than feats supplies the truth: by construction, every
+    LAG_WARMUP-day window after the gap was dropped from feats, so
+    checking only against feats would find nothing to check.
+    """
+    by_date = raw.set_index("dteday")[TARGET]
+    checked = 0
+    for date, lag in feats.set_index("dteday").cnt_lag_7.items():
+        prev = date - pd.Timedelta(days=LAG_WARMUP)
+        if prev in by_date.index:
+            assert lag == pytest.approx(by_date[prev]), (
+                f"cnt_lag_7 wrong at {date.date()}: {lag} != cnt({prev.date()}) "
+                f"= {by_date[prev]}"
+            )
+            checked += 1
+    assert checked > 600, f"only {checked} rows verified"
+    # a duplicate of cnt_lag_1 would satisfy nothing; prove the two differ
+    assert (feats.cnt_lag_7 != feats.cnt_lag_1).mean() > 0.5, (
+        "cnt_lag_7 is nearly identical to cnt_lag_1 -- check its shift"
+    )

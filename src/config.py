@@ -45,6 +45,38 @@ UNVERIFIED_COLS = {"cnt_2d_bfr"}
 # What feature_columns() and the tests actually enforce.
 FORBIDDEN = LEAKAGE_COLS | TIME_INDEX_COLS | UNVERIFIED_COLS
 
+# --- Every raw column must be classified ---------------------------------
+# feature_columns() filters on dtype FIRST (select_dtypes("number")) and on
+# FORBIDDEN second, so an unrecognised column either vanishes silently
+# (string) or enters the model unchecked (numeric). These two sets make the
+# remaining eleven raw columns a stated decision instead of a side effect.
+# A new upstream column belongs to none of the buckets, so
+# tests/test_contract.py::test_every_raw_column_is_classified fails until
+# someone says which one it is.
+
+# Read by build_features(), or passed through to the model unchanged.
+USED_COLS = {
+    "temp", "atemp", "hum", "windspeed",        # numeric, reach the model as-is
+    "dteday", "holiday", "workday", "weather",  # re-encoded into features
+}
+
+# Deliberately not used. season, mnth and weekday are strings, so they are
+# dropped by dtype rather than by rule today; naming them here keeps the
+# drop honest and makes the substitution visible (month_sin/month_cos and
+# weather_severity stand in for mnth and weather, season stands for nothing).
+KNOWN_UNUSED_COLS = {"season", "mnth", "weekday"}
+
+CLASSIFIED_COLS = FORBIDDEN | USED_COLS | KNOWN_UNUSED_COLS
+
+
+def unclassified_columns(columns) -> list[str]:
+    """Return raw column names that belong to no bucket in this module.
+
+    Takes a list so it can be run against a hypothetical frame -- see
+    test_unclassified_columns_detects_a_new_column.
+    """
+    return sorted(set(columns) - CLASSIFIED_COLS)
+
 # Temporal split: train on 2011, validate on H1 2012, test on H2 2012.
 TRAIN_END = "2011-12-31"
 VALID_END = "2012-06-30"
